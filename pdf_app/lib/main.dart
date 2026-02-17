@@ -59,24 +59,55 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _testConnection() async {
+    print('\n=== Testing Backend Connection ===');
+    setState(() {
+      _status = 'Testing connection...';
+    });
+
+    final connected = await _api.testConnection();
+    
+    setState(() {
+      if (connected) {
+        _status = '✓ Backend is online!';
+      } else {
+        _status = '✗ Cannot reach backend. Check logs.';
+      }
+    });
+  }
+
   Future<void> _upload() async {
     if (_selectedFile == null) return;
+    
+    print('\n=== PDF Upload Started ===');
+    print('File path: ${_selectedFile!.path}');
+    print('File name: ${_selectedFile!.path.split(Platform.pathSeparator).last}');
+    print('File size: ${_selectedFile!.lengthSync()} bytes');
+    
     setState(() {
       _uploading = true;
       _status = 'Uploading...';
     });
 
     try {
+      print('Sending file to backend...');
       final docId = await _api.uploadPdf(_selectedFile!);
+      print('✓ Upload successful! Doc ID: $docId');
+      
       setState(() {
         _uploaded = true;
         _status = 'Uploaded. Doc ID: $docId';
       });
     } catch (e) {
+      print('✗ Upload error occurred!');
+      print('Error type: ${e.runtimeType}');
+      print('Error message: $e');
+      
       setState(() {
         _status = 'Upload error: ${e.toString()}';
       });
     } finally {
+      print('Upload process completed');
       setState(() {
         _uploading = false;
       });
@@ -161,7 +192,7 @@ class _HomePageState extends State<HomePage> {
                         icon: _uploading
                             ? const SizedBox(
                                 height: 16,
-                                width: 16,
+                                width: 20,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.cloud_upload),
@@ -169,11 +200,24 @@ class _HomePageState extends State<HomePage> {
                         onPressed:
                             _selectedFile != null && !_uploading ? _upload : null,
                       ),
-                      const SizedBox(width: 12),
-                      Text(
-                        _status ?? '',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: 'Test connection to backend',
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.cloud_queue),
+                          label: const Text('Test'),
+                          onPressed: _uploading ? null : _testConnection,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          _status ?? '',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
                         ),
                       ),
                     ],
