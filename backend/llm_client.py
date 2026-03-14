@@ -15,17 +15,20 @@ class LLMClient:
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         genai.configure(api_key=api_key)
+
+        for m in genai.list_models():
+            print(m.name)
         
         # Use gemini-1.5-flash for better free tier support
         # Models in order of preference:
         # - gemini-1.5-flash: Better free tier limits
         # - gemini-1.5-pro: More capable but lower free tier quota
         # - gemini-2.0-flash: Newest but very restricted free tier
-        self.text_model = genai.GenerativeModel("gemini-1.5-flash")
-        logger.info("Using gemini-1.5-flash model for text generation")
+        self.text_model = genai.GenerativeModel("models/gemini-2.5-flash")
+        logger.info("Using gemini-pro    model for text generation")
         
         # Embedding model
-        self.embedding_model = "models/text-embedding-004"
+        self.embedding_model = "models/gemini-embedding-001"
         logger.info("Using text-embedding-004 model for embeddings")
         
         # Response cache to avoid repeated API calls

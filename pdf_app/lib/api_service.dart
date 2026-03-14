@@ -8,13 +8,13 @@ class ApiService {
   // CONFIGURATION: Change this based on your setup
   // 
   // For Android Emulator:
-    // static const String baseUrl = 'http://10.0.2.2:8000';
+  //   static const String baseUrl = 'http://10.0.2.2:8000';
   //
   // For Physical Device on WiFi:
-  //   This is set to: 10.110.86.166 (your PC's WiFi IP)
+  //   This is set to: 10.206.90.166 (your PC's WiFi IP)
   //   Make sure your Android phone is on the same WiFi network
   //
-  static const String baseUrl = 'http://10.110.86.166:8000'; // ← Physical Android device on WiFi
+    static const String baseUrl = 'http://10.206.90.166:8000'; // ← Physical Android device on WiFi
   
   // Make sure backend is running: python app.py
 
