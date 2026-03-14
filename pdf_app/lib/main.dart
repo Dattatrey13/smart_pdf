@@ -5,6 +5,10 @@ import 'package:flutter/material.dart';
 
 import 'api_service.dart';
 import 'chat_screen.dart';
+import 'core/theme/app_theme.dart';
+import 'features/summary/summary_tab.dart';
+import 'features/search/quick_search_tab.dart';
+import 'features/upload/upload_panel.dart';
 
 void main() {
   runApp(const SmartPdfApp());
@@ -17,10 +21,8 @@ class SmartPdfApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Smart PDF',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
       home: const HomePage(),
     );
   }
@@ -33,15 +35,27 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final ApiService _api = ApiService();
   File? _selectedFile;
   bool _uploading = false;
   bool _uploaded = false;
   String? _status;
   String? _summary;
-  String _searchQuery = '';
-  List<Map<String, dynamic>> _searchResults = [];
+  bool _summaryLoading = false;
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickPdf() async {
     final res = await FilePicker.platform.pickFiles(
@@ -53,103 +67,64 @@ class _HomePageState extends State<HomePage> {
         _selectedFile = File(res.files.single.path!);
         _uploaded = false;
         _summary = null;
-        _searchResults = [];
         _status = null;
       });
     }
   }
 
   Future<void> _testConnection() async {
-    print('\n=== Testing Backend Connection ===');
-    setState(() {
-      _status = 'Testing connection...';
-    });
-
+    setState(() => _status = 'Testing connection...');
     final connected = await _api.testConnection();
-    
     setState(() {
-      if (connected) {
-        _status = '✓ Backend is online!';
-      } else {
-        _status = '✗ Cannot reach backend. Check logs.';
-      }
+      _status = connected ? '✓ Backend is online!' : '✗ Cannot reach backend';
     });
   }
 
   Future<void> _upload() async {
     if (_selectedFile == null) return;
-    
-    print('\n=== PDF Upload Started ===');
-    print('File path: ${_selectedFile!.path}');
-    print('File name: ${_selectedFile!.path.split(Platform.pathSeparator).last}');
-    print('File size: ${_selectedFile!.lengthSync()} bytes');
-    
     setState(() {
       _uploading = true;
-      _status = 'Uploading...';
+      _status = 'Uploading & indexing PDF...';
     });
-
     try {
-      print('Sending file to backend...');
       final docId = await _api.uploadPdf(_selectedFile!);
-      print('✓ Upload successful! Doc ID: $docId');
-      
       setState(() {
         _uploaded = true;
-        _status = 'Uploaded. Doc ID: $docId';
+        _status = '✓ Ready — Doc ID: $docId';
       });
     } catch (e) {
-      print('✗ Upload error occurred!');
-      print('Error type: ${e.runtimeType}');
-      print('Error message: $e');
-      
-      setState(() {
-        _status = 'Upload error: ${e.toString()}';
-      });
+      setState(() => _status = 'Upload error: ${e.toString()}');
     } finally {
-      print('Upload process completed');
-      setState(() {
-        _uploading = false;
-      });
+      setState(() => _uploading = false);
     }
   }
 
   Future<void> _loadSummary() async {
     if (!_uploaded) return;
     setState(() {
-      _status = 'Generating summary...';
+      _summaryLoading = true;
       _summary = null;
     });
     try {
       final s = await _api.getSummary();
-      setState(() {
-        _summary = s;
-        _status = 'Summary ready';
-      });
+      setState(() => _summary = s);
     } catch (e) {
-      setState(() {
-        _status = 'Summary error: ${e.toString()}';
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Summary failed: ${e.toString()}'),
+            backgroundColor: AppTheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _summaryLoading = false);
     }
   }
 
-  Future<void> _runSearch() async {
-    if (!_uploaded || _searchQuery.trim().isEmpty) return;
-    setState(() {
-      _status = 'Searching...';
-      _searchResults = [];
-    });
-    try {
-      final hits = await _api.quickSearch(_searchQuery.trim());
-      setState(() {
-        _searchResults = hits;
-        _status = 'Search complete (${hits.length} hits)';
-      });
-    } catch (e) {
-      setState(() {
-        _status = 'Search error: ${e.toString()}';
-      });
-    }
+  Future<List<Map<String, dynamic>>> _runSearch(String query) async {
+    return await _api.quickSearch(query);
   }
 
   @override
@@ -157,194 +132,310 @@ class _HomePageState extends State<HomePage> {
     final canUse = _uploaded && !_uploading;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Smart PDF'),
-      ),
+      backgroundColor: AppTheme.surface,
       body: Column(
         children: [
-          Material(
-            elevation: 1,
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _selectedFile != null
-                              ? 'Selected: ${_selectedFile!.path.split(Platform.pathSeparator).last}'
-                              : 'No PDF selected',
+          // Custom app bar
+          _AppHeader(),
+          // Upload panel
+          UploadPanel(
+            selectedFile: _selectedFile,
+            uploading: _uploading,
+            uploaded: _uploaded,
+            status: _status,
+            onPickPdf: _pickPdf,
+            onUpload: _upload,
+            onTestConnection: _testConnection,
+          ),
+          // Tabs
+          Expanded(
+            child: Column(
+              children: [
+                Container(
+                  color: AppTheme.surface,
+                  child: TabBar(
+                    controller: _tabController,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    indicator: BoxDecoration(
+                      gradient: AppTheme.primaryGradient,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    splashBorderRadius: BorderRadius.circular(10),
+                    dividerColor: Colors.transparent,
+                    tabs: const [
+                      Tab(
+                        height: 44,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.chat_bubble_rounded, size: 16),
+                            SizedBox(width: 6),
+                            Text('Ask AI'),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.picture_as_pdf),
-                        label: const Text('Pick PDF'),
-                        onPressed: _uploading ? null : _pickPdf,
+                      Tab(
+                        height: 44,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.auto_awesome_rounded, size: 16),
+                            SizedBox(width: 6),
+                            Text('Summary'),
+                          ],
+                        ),
+                      ),
+                      Tab(
+                        height: 44,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.manage_search_rounded, size: 16),
+                            SizedBox(width: 6),
+                            Text('Search'),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Row(
+                ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
                     children: [
-                      ElevatedButton.icon(
-                        icon: _uploading
-                            ? const SizedBox(
-                                height: 16,
-                                width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.cloud_upload),
-                        label: const Text('Upload & Index'),
-                        onPressed:
-                            _selectedFile != null && !_uploading ? _upload : null,
-                      ),
-                      const SizedBox(width: 8),
-                      Tooltip(
-                        message: 'Test connection to backend',
-                        child: OutlinedButton.icon(
-                          icon: const Icon(Icons.cloud_queue),
-                          label: const Text('Test'),
-                          onPressed: _uploading ? null : _testConnection,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          _status ?? '',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 2,
-                        ),
-                      ),
+                      // Ask AI
+                      canUse
+                          ? ChatScreen(api: _api)
+                          : _LockedTab(
+                              icon: Icons.chat_bubble_rounded,
+                              title: 'Ask AI',
+                              message: 'Upload a PDF to start chatting with AI',
+                            ),
+                      // Summary
+                      canUse
+                          ? SummaryTab(
+                              summary: _summary,
+                              onGenerate: _loadSummary,
+                              isLoading: _summaryLoading,
+                            )
+                          : _LockedTab(
+                              icon: Icons.auto_awesome_rounded,
+                              title: 'Summary',
+                              message: 'Upload a PDF to generate an AI summary',
+                            ),
+                      // Search
+                      canUse
+                          ? QuickSearchTab(onSearch: _runSearch)
+                          : _LockedTab(
+                              icon: Icons.manage_search_rounded,
+                              title: 'Search',
+                              message: 'Upload a PDF to search within it',
+                            ),
                     ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          Expanded(
-            child: DefaultTabController(
-              length: 3,
-              child: Column(
-                children: [
-                  const TabBar(
-                    tabs: [
-                      Tab(icon: Icon(Icons.chat), text: 'Ask AI'),
-                      Tab(icon: Icon(Icons.summarize), text: 'Summary'),
-                      Tab(icon: Icon(Icons.search), text: 'Quick Search'),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, top + 14, 20, 14),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: AppTheme.primary.withOpacity(0.1),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Logo
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              gradient: AppTheme.primaryGradient,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withOpacity(0.4),
+                  blurRadius: 12,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.picture_as_pdf_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Smart PDF',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.onSurface,
+                  fontFamily: 'Outfit',
+                  letterSpacing: 0.3,
+                ),
+              ),
+              Text(
+                'AI-Powered Document Intelligence',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppTheme.onSurfaceMuted,
+                  fontFamily: 'Outfit',
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppTheme.primary.withOpacity(0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: AppTheme.success,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.success.withOpacity(0.8),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
                     ],
                   ),
-                  Expanded(
-                    child: TabBarView(
-                      children: [
-                        // Ask AI
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: canUse
-                              ? ChatScreen(api: _api)
-                              : const Center(
-                                  child: Text('Upload a PDF first.'),
-                                ),
-                        ),
-                        // Summary
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: canUse
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                                  children: [
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.summarize),
-                                      label: const Text('Generate Summary'),
-                                      onPressed: _loadSummary,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Expanded(
-                                      child: SingleChildScrollView(
-                                        child: Text(
-                                          _summary ??
-                                              'No summary yet. Tap "Generate Summary".',
-                                          style: const TextStyle(fontSize: 16),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              : const Center(
-                                  child: Text('Upload a PDF first.'),
-                                ),
-                        ),
-                        // Quick Search
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: canUse
-                              ? Column(
-                                  children: [
-                                    TextField(
-                                      decoration: const InputDecoration(
-                                        labelText: 'Search phrase...',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      onChanged: (v) {
-                                        _searchQuery = v;
-                                      },
-                                      onSubmitted: (_) => _runSearch(),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: ElevatedButton.icon(
-                                        icon: const Icon(Icons.search),
-                                        label: const Text('Search'),
-                                        onPressed: _runSearch,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Expanded(
-                                      child: _searchResults.isEmpty
-                                          ? const Center(
-                                              child: Text(
-                                                  'No results. Run a search.'),
-                                            )
-                                          : ListView.builder(
-                                              itemCount: _searchResults.length,
-                                              itemBuilder: (context, index) {
-                                                final hit =
-                                                    _searchResults[index];
-                                                return Card(
-                                                  child: ListTile(
-                                                    title: Text(
-                                                      hit['text'] as String,
-                                                      maxLines: 5,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                    ),
-                                                    subtitle: Text(
-                                                      'Score: ${(hit['score'] as num).toStringAsFixed(3)}',
-                                                    ),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                    ),
-                                  ],
-                                )
-                              : const Center(
-                                  child: Text('Upload a PDF first.'),
-                                ),
-                        ),
-                      ],
+                ),
+                const SizedBox(width: 5),
+                const Text(
+                  'Claude AI',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primary,
+                    fontFamily: 'Outfit',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LockedTab extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+
+  const _LockedTab({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 70,
+              height: 70,
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceCard,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF2A2A4A),
+                  width: 1.5,
+                ),
+              ),
+              child: Icon(icon, color: AppTheme.onSurfaceMuted, size: 30),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.onSurface,
+                fontFamily: 'Outfit',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppTheme.onSurfaceMuted,
+                fontFamily: 'Outfit',
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: AppTheme.primary.withOpacity(0.25),
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.arrow_upward_rounded,
+                      color: AppTheme.primary, size: 14),
+                  SizedBox(width: 6),
+                  Text(
+                    'Upload a PDF above to unlock',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.primary,
+                      fontFamily: 'Outfit',
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
